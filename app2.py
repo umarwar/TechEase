@@ -1,5 +1,6 @@
 import streamlit as st
 import requests
+import os
 from ibm_watsonx_ai import APIClient, Credentials
 from ibm_watsonx_ai.foundation_models import ModelInference
 from ibm_watsonx_ai.foundation_models.utils.enums import ModelTypes
@@ -9,15 +10,15 @@ from googletrans import Translator  # Install googletrans with `pip install goog
 
 # Initialize credentials
 credentials = Credentials(
-    url="https://us-south.ml.cloud.ibm.com",  # Ensure this URL is correct for your region
-    api_key="your_api_key"  # Replace with your actual API key
+    url=os.getenv("IBM_WATSON_URL"),  # URL from environment variables
+    api_key=os.getenv("IBM_WATSON_API_KEY")  # API key from environment variables
 )
 
 # Initialize API client
 client = APIClient(credentials)
 
 # Set default project
-project_id = '7a78f733-6524-44ea-bd00-e71314499c69'
+project_id = os.getenv("IBM_PROJECT_ID")  # Project ID from environment variables
 client.set.default_project(project_id)
 
 # Initialize model inference
@@ -37,9 +38,9 @@ model = ModelInference(
 # Initialize Translator
 translator = Translator()
 
-# Google Custom Search API details
-API_KEY = ''
-SEARCH_ENGINE_ID = ''
+# Google Custom Search API details from environment variables
+API_KEY = os.getenv("GOOGLE_API_KEY")
+SEARCH_ENGINE_ID = os.getenv("GOOGLE_SEARCH_ENGINE_ID")
 
 # Function to summarize text (dummy implementation, replace with actual summarization)
 def summarize_text(text):
@@ -63,14 +64,14 @@ def search_articles(query):
         return []
 
 # Streamlit UI
-st.title("Tech Ease")
-st.header("Get Solutions for Your Device Issues")
+st.markdown("<h1 style='color: #1f77b4;'>Tech Ease</h1>", unsafe_allow_html=True)
+st.markdown("<h2>Get Solutions for Your Device Issues</h2>", unsafe_allow_html=True)
 
 # Sidebar
-st.sidebar.header("Options")
+st.sidebar.markdown("<h3 style='color: white;'>Options</h3>", unsafe_allow_html=True)
 
 # User input section
-st.sidebar.subheader("Describe Your Issue")
+st.sidebar.markdown("<h4 style='color: red;'>Describe Your Issue</h4>", unsafe_allow_html=True)
 input_text = st.sidebar.text_area("Enter the issue with your electronic device or mobile phone:", "")
 
 # Language selection
@@ -83,7 +84,7 @@ language = st.sidebar.selectbox(
 if 'history' not in st.session_state:
     st.session_state.history = []
 
-st.sidebar.subheader("Past Searches")
+st.sidebar.markdown("<h4 style='color: #9467bd;'>Past Searches</h4>", unsafe_allow_html=True)
 if st.session_state.history:
     for i, (text, result) in enumerate(st.session_state.history):
         st.sidebar.write(f"{i+1}. {text}")
