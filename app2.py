@@ -10,7 +10,7 @@ from googletrans import Translator  # Install googletrans with `pip install goog
 # Initialize credentials
 credentials = Credentials(
     url="https://us-south.ml.cloud.ibm.com",  # Ensure this URL is correct for your region
-    api_key=""  # Replace with your actual API key
+    api_key="your_api_key"  # Replace with your actual API key
 )
 
 # Initialize API client
