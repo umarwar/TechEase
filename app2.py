@@ -1,24 +1,53 @@
 import streamlit as st
 import requests
-import os
 from ibm_watsonx_ai import APIClient, Credentials
 from ibm_watsonx_ai.foundation_models import ModelInference
 from ibm_watsonx_ai.foundation_models.utils.enums import ModelTypes
 from ibm_watsonx_ai.metanames import GenTextParamsMetaNames as GenParams
 from ibm_watsonx_ai.foundation_models.utils.enums import DecodingMethods
-from googletrans import Translator  # Install googletrans with `pip install googletrans==4.0.0-rc1`
+from googletrans import Translator
 
-# Initialize credentials
+# Initialize Translator
+translator = Translator()
+
+# Custom CSS for headings
+st.markdown(
+    """
+    <style>
+    .main-title {
+        color: #3498db; /* Blue color */
+    }
+    .header-title {
+        color: #e74c3c; /* Red color */
+    }
+    .sidebar-header {
+        color: #2ecc71; /* Green color */
+    }
+    </style>
+    """,
+    unsafe_allow_html=True
+)
+
+# Function to translate text
+def translate_text(text, dest_language):
+    try:
+        translation = translator.translate(text, dest=dest_language)
+        return translation.text
+    except Exception as e:
+        st.error(f"Translation failed: {e}")
+        return None
+
+# IBM Watson credentials
 credentials = Credentials(
-    url=os.getenv("IBM_WATSON_URL"),  # URL from environment variables
-    api_key=os.getenv("IBM_WATSON_API_KEY")  # API key from environment variables
+    url=st.secrets["IBM_WATSON_URL"],  # Fetch from Streamlit secrets
+    api_key=st.secrets["IBM_WATSON_API_KEY"]  # Fetch from Streamlit secrets
 )
 
 # Initialize API client
 client = APIClient(credentials)
 
 # Set default project
-project_id = os.getenv("IBM_PROJECT_ID")  # Project ID from environment variables
+project_id = st.secrets["IBM_WATSON_PROJECT_ID"]  # Fetch from Streamlit secrets
 client.set.default_project(project_id)
 
 # Initialize model inference
@@ -27,24 +56,20 @@ model = ModelInference(
     model_id=model_id,
     params={
         GenParams.DECODING_METHOD: DecodingMethods.GREEDY,
-        GenParams.MIN_NEW_TOKENS: 500,  # Adjust to allow for detailed responses
-        GenParams.MAX_NEW_TOKENS: 2000,  # Increased for potentially longer responses
+        GenParams.MIN_NEW_TOKENS: 500,
+        GenParams.MAX_NEW_TOKENS: 2000,
         GenParams.STOP_SEQUENCES: ["\n"]
     },
     credentials=credentials,
     project_id=project_id
 )
 
-# Initialize Translator
-translator = Translator()
-
-# Google Custom Search API details from environment variables
-API_KEY = os.getenv("GOOGLE_API_KEY")
-SEARCH_ENGINE_ID = os.getenv("GOOGLE_SEARCH_ENGINE_ID")
+# Google Custom Search API details
+API_KEY = st.secrets["GOOGLE_API_KEY"], # Fetch from Streamlit secrets
+SEARCH_ENGINE_ID = st.secrets["GOOGLE_SEARCH_ENGINE_ID"] # Fetch from Streamlit secrets
 
 # Function to summarize text (dummy implementation, replace with actual summarization)
 def summarize_text(text):
-    # Example summarization (replace with real summarization logic)
     return text[:min(1000, len(text))]  # Simplistic approach for example
 
 # Function to search for articles using Google Custom Search API
@@ -64,32 +89,45 @@ def search_articles(query):
         return []
 
 # Streamlit UI
-st.markdown("<h1 style='color: #1f77b4;'>Tech Ease</h1>", unsafe_allow_html=True)
-st.markdown("<h2>Get Solutions for Your Device Issues</h2>", unsafe_allow_html=True)
+
+st.markdown('<h1 class="main-title">Tech Ease</h1>', unsafe_allow_html=True)
+st.markdown('<h2 class="header-title">Get Solutions for Your Device Issues</h2>', unsafe_allow_html=True)
 
 # Sidebar
-st.sidebar.markdown("<h3 style='color: white;'>Options</h3>", unsafe_allow_html=True)
+st.sidebar.header("Options")
 
 # User input section
-st.sidebar.markdown("<h4 style='color: red;'>Describe Your Issue</h4>", unsafe_allow_html=True)
+st.sidebar.subheader("Describe Your Issue")
 input_text = st.sidebar.text_area("Enter the issue with your electronic device or mobile phone:", "")
 
 # Language selection
 language = st.sidebar.selectbox(
     "Select Output Language",
-    ["English", "Spanish", "French", "German", "Chinese"]  # Add other languages as needed
+    ["English", "Spanish", "French", "German"]  # Add other languages as needed
 )
 
-# Past search history
+# Spacer
+st.sidebar.write("\n")  # Adds an empty line
+
+# Heading for Past Searches
+st.sidebar.subheader("Past Searches")
 if 'history' not in st.session_state:
     st.session_state.history = []
 
-st.sidebar.markdown("<h4 style='color: #9467bd;'>Past Searches</h4>", unsafe_allow_html=True)
 if st.session_state.history:
     for i, (text, result) in enumerate(st.session_state.history):
-        st.sidebar.write(f"{i+1}. {text}")
+        if st.sidebar.button(f"View {i+1}: {text[:30]}...", key=f"history_{i}"):
+            st.session_state.current_response = result  # Load the corresponding result
+            st.write(f"Past Solution for: {text}")
+            st.success(result)
 else:
     st.sidebar.write("No past searches.")
+
+# Spacer
+st.sidebar.write("\n")  # Adds an empty line
+
+# Heading for Other Actions
+st.sidebar.subheader("Actions")
 
 # Button to get solution
 if st.sidebar.button("Get Solution"):
@@ -115,12 +153,10 @@ if st.sidebar.button("Get Solution"):
 if 'current_response' in st.session_state:
     if st.sidebar.button("Translate"):
         if language != "English":
-            try:
-                translated_response = translator.translate(st.session_state.current_response, dest=language).text
+            translated_response = translate_text(st.session_state.current_response, language.lower())
+            if translated_response:
                 st.write(f"Translated Solution ({language}):")
                 st.success(translated_response)
-            except Exception as e:
-                st.error(f"Failed to translate: {e}")
         else:
             st.warning("No translation needed; the response is already in English.")
 
