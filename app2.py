@@ -1,187 +1,243 @@
+import os
+import speech_recognition as sr
+from gtts import gTTS
 import streamlit as st
-import requests
-from ibm_watsonx_ai import APIClient, Credentials
-from ibm_watsonx_ai.foundation_models import ModelInference
-from ibm_watsonx_ai.foundation_models.utils.enums import ModelTypes
-from ibm_watsonx_ai.metanames import GenTextParamsMetaNames as GenParams
-from ibm_watsonx_ai.foundation_models.utils.enums import DecodingMethods
-from googletrans import Translator
+from openai import OpenAI
+import tempfile
+from langdetect import detect
+import sounddevice as sd
+import numpy as np
+from pydub import AudioSegment
 
-# Initialize Translator
-translator = Translator()
-
-# Custom CSS for headings
-st.markdown(
-    """
-    <style>
-    .main-title {
-        color: #3498db; /* Blue color */
-    }
-    .header-title {
-        color: #e74c3c; /* Red color */
-    }
-    .sidebar-header {
-        color: #2ecc71; /* Green color */
-    }
-    </style>
-    """,
-    unsafe_allow_html=True
+# Initialize OpenAI client
+client = OpenAI(
+    api_key=st.secrets["API_KEY"],
+    base_url="https://api.aimlapi.com",
 )
 
-# Function to translate text
-def translate_text(text, dest_language):
-    try:
-        translation = translator.translate(text, dest=dest_language)
-        return translation.text
-    except Exception as e:
-        st.error(f"Translation failed: {e}")
-        return None
+# Maintain a conversation history and user profiles
+conversation_history = []
+user_profile = {"language": "en", "preferences": {}, "age": None, "weight": None}
 
-# IBM Watson credentials
-credentials = Credentials(
-    url=st.secrets["IBM_WATSON_URL"],  # Fetch from Streamlit secrets
-    api_key=st.secrets["IBM_WATSON_API_KEY"]  # Fetch from Streamlit secrets
-)
+# Sample medical condition checker (mock integration with medical databases)
+medical_conditions_db = {
+    "fever": "You might be experiencing a viral infection or flu. Please monitor your temperature and stay hydrated. If it persists, consult a healthcare professional.",
+    "headache": "A headache could be due to stress, dehydration, or lack of sleep. Rest and drink plenty of fluids. If it lasts longer than a few days, see a doctor.",
+}
 
-# Initialize API client
-client = APIClient(credentials)
+# Supported language mappings for SpeechRecognition and gTTS
+language_mapping = {
+    "Afrikaans": "af",
+    "Amharic": "am",
+    "Arabic": "ar",
+    "Bulgarian": "bg",
+    "Bengali": "bn",
+    "Bosnian": "bs",
+    "Catalan": "ca",
+    "Czech": "cs",
+    "Welsh": "cy",
+    "Danish": "da",
+    "German": "de",
+    "Greek": "el",
+    "English": "en",
+    "Spanish": "es",
+    "Estonian": "et",
+    "Basque": "eu",
+    "Finnish": "fi",
+    "French": "fr",
+    "Galician": "gl",
+    "Gujarati": "gu",
+    "Hausa": "ha",
+    "Hindi": "hi",
+    "Croatian": "hr",
+    "Hungarian": "hu",
+    "Indonesian": "id",
+    "Icelandic": "is",
+    "Italian": "it",
+    "Hebrew": "iw",
+    "Japanese": "ja",
+    "Javanese": "jw",
+    "Khmer": "km",
+    "Kannada": "kn",
+    "Korean": "ko",
+    "Latin": "la",
+    "Lithuanian": "lt",
+    "Latvian": "lv",
+    "Malayalam": "ml",
+    "Marathi": "mr",
+    "Malay": "ms",
+    "Myanmar (Burmese)": "my",
+    "Nepali": "ne",
+    "Dutch": "nl",
+    "Norwegian": "no",
+    "Punjabi (Gurmukhi)": "pa",
+    "Polish": "pl",
+    "Tamil": "ta",
+    "Telugu": "te",
+    "Thai": "th",
+    "Filipino": "tl",
+    "Turkish": "tr",
+    "Ukrainian": "uk",
+    "Urdu": "ur",
+    "Vietnamese": "vi",
+    "Cantonese": "yue",
+    "Chinese (Simplified)": "zh-CN",
+    "Chinese (Mandarin/Taiwan)": "zh-TW",
+    "Chinese (Mandarin)": "zh"
+}
 
-# Set default project
-project_id = st.secrets["IBM_WATSON_PROJECT_ID"]  # Fetch from Streamlit secrets
-client.set.default_project(project_id)
+# Global variables for audio control
+current_audio = None
+audio_segment = None
+audio_file = None  # Global variable to store audio file path
 
-# Initialize model inference
-model_id = ModelTypes.GRANITE_13B_CHAT_V2
-model = ModelInference(
-    model_id=model_id,
-    params={
-        GenParams.DECODING_METHOD: DecodingMethods.GREEDY,
-        GenParams.MIN_NEW_TOKENS: 500,
-        GenParams.MAX_NEW_TOKENS: 2000,
-        GenParams.STOP_SEQUENCES: ["\n"]
-    },
-    credentials=credentials,
-    project_id=project_id
-)
+def detect_language(text):
+    """Detect the language of the input text."""
+    return detect(text)
 
-# Google Custom Search API details
-API_KEY = st.secrets["GOOGLE_API_KEY"], # Fetch from Streamlit secrets
-SEARCH_ENGINE_ID = st.secrets["GOOGLE_SEARCH_ENGINE_ID"] # Fetch from Streamlit secrets
-
-# Function to summarize text (dummy implementation, replace with actual summarization)
-def summarize_text(text):
-    return text[:min(1000, len(text))]  # Simplistic approach for example
-
-# Function to search for articles using Google Custom Search API
-def search_articles(query):
-    search_url = f"https://www.googleapis.com/customsearch/v1"
-    params = {
-        'key': API_KEY,
-        'cx': SEARCH_ENGINE_ID,
-        'q': query
-    }
-    response = requests.get(search_url, params=params)
-    if response.status_code == 200:
-        results = response.json()
-        articles = results.get('items', [])
-        return [(article['title'], article['link']) for article in articles]
-    else:
-        return []
-
-# Streamlit UI
-
-st.markdown('<h1 class="main-title">Tech Ease</h1>', unsafe_allow_html=True)
-st.markdown('<h2 class="header-title">Get Solutions for Your Device Issues</h2>', unsafe_allow_html=True)
-
-# Sidebar
-st.sidebar.header("Options")
-
-# User input section
-st.sidebar.subheader("Describe Your Issue")
-input_text = st.sidebar.text_area("Enter the issue with your electronic device or mobile phone:", "")
-
-# Language selection
-language = st.sidebar.selectbox(
-    "Select Output Language",
-    ["English", "Spanish", "French", "German"]  # Add other languages as needed
-)
-
-# Spacer
-st.sidebar.write("\n")  # Adds an empty line
-
-# Heading for Past Searches
-st.sidebar.subheader("Past Searches")
-if 'history' not in st.session_state:
-    st.session_state.history = []
-
-if st.session_state.history:
-    for i, (text, result) in enumerate(st.session_state.history):
-        if st.sidebar.button(f"View {i+1}: {text[:30]}...", key=f"history_{i}"):
-            st.session_state.current_response = result  # Load the corresponding result
-            st.write(f"Past Solution for: {text}")
-            st.success(result)
-else:
-    st.sidebar.write("No past searches.")
-
-# Spacer
-st.sidebar.write("\n")  # Adds an empty line
-
-# Heading for Other Actions
-st.sidebar.subheader("Actions")
-
-# Button to get solution
-if st.sidebar.button("Get Solution"):
-    if input_text:
-        prompt = f"Provide a detailed solution to fix the following issue with a mobile power IC. Describe the possible causes of the issue and the steps to troubleshoot and repair it. Issue: {input_text}"
+def audio_to_text(lang="en"):
+    """Convert audio to text using SpeechRecognition, with specified language."""
+    recognizer = sr.Recognizer()
+    
+    with sr.Microphone() as source:
+        st.write("Listening... Please speak.")
+        audio_data = recognizer.listen(source)
+        st.write("Recording stopped. Processing your input...")
         
         try:
-            response = model.generate_text(prompt=prompt)
-            st.write("Generated Solution:")
-            st.success(response)  # Display the response
-            
-            # Save the response to session state
-            st.session_state.current_response = response
-            
-            # Save to history
-            st.session_state.history.append((input_text, response))
-        except Exception as e:
-            st.error(f"Failed to generate solution: {e}")
-    else:
-        st.warning("Please describe the issue before generating a solution.")
+            text = recognizer.recognize_google(audio_data, language=lang)
+            st.write(f"You: {text}")
+            return text
+        except sr.UnknownValueError:
+            st.write("Sorry, I could not understand the audio.")
+            return None
+        except sr.RequestError as e:
+            st.write(f"Could not request results; {e}")
+            return None
 
-# Button to translate text
-if 'current_response' in st.session_state:
-    if st.sidebar.button("Translate"):
-        if language != "English":
-            translated_response = translate_text(st.session_state.current_response, language.lower())
-            if translated_response:
-                st.write(f"Translated Solution ({language}):")
-                st.success(translated_response)
-        else:
-            st.warning("No translation needed; the response is already in English.")
+def text_to_audio(text, lang):
+    """Convert text to speech and save to an MP3 file."""
+    tts = gTTS(text=text, lang=lang)
+    output_file = tempfile.NamedTemporaryFile(delete=False, suffix=".mp3")
+    tts.save(output_file.name)
+    return output_file.name
 
-# Button to summarize text
-if 'current_response' in st.session_state:
-    if st.sidebar.button("Summarize"):
-        try:
-            summarized_text = summarize_text(st.session_state.current_response)
-            st.write("Summarized Solution:")
-            st.success(summarized_text)
-        except Exception as e:
-            st.error(f"Failed to summarize: {e}")
+def play_audio(file_path):
+    """Play audio using sounddevice."""
+    global audio_segment
+    
+    # Load the audio segment
+    audio_segment = AudioSegment.from_mp3(file_path)
+    samples = np.array(audio_segment.get_array_of_samples())
 
-# Button to search for related articles
-if st.sidebar.button("Find Articles"):
-    if input_text:
-        try:
-            articles = search_articles(input_text)
-            if articles:
-                st.write("Related Articles:")
-                for title, link in articles:
-                    st.markdown(f"[{title}]({link})")
+    # Reshape the samples for stereo audio if necessary
+    if audio_segment.channels == 2:
+        samples = samples.reshape((-1, 2))
+
+    # Play audio
+    sd.play(samples, samplerate=audio_segment.frame_rate)
+    sd.wait()  # Wait until the audio is finished playing
+
+def get_response(user_input, age=None, weight=None):
+    """Get AI response from OpenAI model."""
+    conversation_history.append({"role": "user", "content": user_input})
+    
+    # Include age and weight in the system message for context
+    system_message = "You are an AI assistant who knows everything."
+    if age is not None and weight is not None:
+        system_message += f" The user is {age} years old and weighs {weight} kg."
+    
+    response = client.chat.completions.create(
+        model="gpt-4o-2024-08-06",
+        messages=[{"role": "system", "content": system_message}] + conversation_history
+    )
+    
+    assistant_message = response.choices[0].message.content
+    st.write(f"Assistant: {assistant_message}")
+    
+    conversation_history.append({"role": "assistant", "content": assistant_message})
+    
+    return assistant_message
+
+def check_symptom(symptom_description):
+    """Check symptoms against a mock database."""
+    for symptom, advice in medical_conditions_db.items():
+        if symptom in symptom_description.lower():
+            return advice
+    return "I'm not sure about this symptom. Please consult a doctor for a more accurate diagnosis."
+
+def end_conversation():
+    """Function to end the conversation."""
+    st.write("Thank you for using the Health Assistant. Have a great day!")
+    st.stop()
+
+def emergency_contact():
+    """Function to provide emergency contact information."""
+    st.write("In case of emergency, please call your local emergency services or go to the nearest hospital.")
+
+# Function for single input and response
+def single_input_interaction():
+    st.write("Press the button below to provide your voice input.")
+    
+    if st.button("Record Voice Input"):
+        user_input = audio_to_text(user_profile["language"])
+
+        if user_input:
+            detected_lang = detect_language(user_input)
+            lang = language_mapping.get(detected_lang, user_profile["language"])
+            st.write(f"Detected language: {lang}")
+
+            # Check for specific commands
+            if "health tip" in user_input.lower():
+                response_text = "Stay hydrated and get enough sleep."
+            elif "emergency" in user_input.lower():
+                emergency_contact()
+                return
             else:
-                st.write("No articles found.")
-        except Exception as e:
-            st.error(f"Failed to fetch articles: {e}")
-    else:
-        st.warning("Please describe the issue before searching for articles.")
+                response_text = check_symptom(user_input)
+
+            if response_text == "I'm not sure about this symptom. Please consult a doctor for a more accurate diagnosis.":
+                response_text = get_response(user_input, user_profile["age"], user_profile["weight"])
+
+            # Convert text to audio and play it
+            global audio_file  # Use global variable for audio_file
+            audio_file = text_to_audio(response_text, lang)
+            st.write("Playing the response audio...")
+            play_audio(audio_file)
+
+            # Create buttons for audio control
+            if st.button("End Current Output"):
+                sd.stop()  # Stop the audio playback
+                st.write("Audio playback stopped.")
+
+            if st.button("Repeat Last Response"):
+                if audio_file:  # Check if audio_file is available
+                    st.write("Repeating the last response audio...")
+                    play_audio(audio_file)
+
+            if st.button("Seek Backward"):
+                if audio_segment is not None:
+                    # Seek backward by 5 seconds
+                    new_start_time = max(0, len(audio_segment) - 5000)  # 5000 ms
+                    new_audio_segment = audio_segment[new_start_time:]  # Get last part
+                    new_audio_segment.export("temp_audio.mp3", format="mp3")  # Export to temp file
+                    st.write("Seeking backward in the audio...")
+                    play_audio("temp_audio.mp3")
+
+# Streamlit UI
+st.title("Real-time Multilingual Audio Health Assistant")
+
+# User Profile Input
+st.sidebar.header("User Profile")
+user_language = st.sidebar.selectbox("Select Your Language", list(language_mapping.keys()))
+user_profile["language"] = language_mapping[user_language]
+
+# Input for Age and Weight
+user_age = st.sidebar.number_input("Enter Your Age", min_value=0, max_value=120, value=30)
+user_profile["age"] = user_age
+
+user_weight = st.sidebar.number_input("Enter Your Weight (kg)", min_value=0, value=70)
+user_profile["weight"] = user_weight
+
+# Start interaction
+single_input_interaction()
